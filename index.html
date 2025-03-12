@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skate Adrena</title>
+<style>
+body {
+margin: 0;
+padding: 0;
+background-color: #000;
+display: flex;
+justify-content: center;
+align-items: center;
+height: 100vh;
+font-family: 'Courier New', monospace;
+overflow: hidden;
+}
+/* Gameboy reduzido: 256x416 (20% menor que 320x520) */
+.gameboy-container {
+position: relative;
+width: 256px;
+height: 416px;
+background-color: #111;
+border-radius: 10px;
+padding: 20px;
+display: flex;
+flex-direction: column;
+box-shadow: 0 0 10px #0f0;
+}
+.screen-container {
+background-color: #000;
+border: 4px solid #333;
+border-radius: 5px;
+flex-grow: 1;
+margin-bottom: 20px;
+position: relative;
+overflow: hidden;
+}
+.game-title {
+color: #0f0;
+text-align: center;
+margin-top: 10px;
+margin-bottom: 10px;
+text-shadow: 0 0 5px #0f0;
+}
+.controls {
+display: flex;
+justify-content: space-between;
+align-items: center;
+}
+.dpad {
+width: 100px;
+height: 100px;
+position: relative;
+}
+.dpad-button {
+width: 30px;
+height: 30px;
+background-color: #333;
+position: absolute;
+border-radius: 5px;
+}
+.dpad-up { top: 0; left: 35px; }
+.dpad-right { top: 35px; right: 0; }
+.dpad-down { bottom: 0; left: 35px; }
+.dpad-left { top: 35px; left: 0; }
+.dpad-center { top: 35px; left: 35px; width: 30px; height: 30px; background-color: #222; }
+.action-buttons {
+display: flex;
+gap: 15px;
+}
+.action-button {
+width: 40px;
+height: 40px;
+background-color: #333;
+border-radius: 50%;
+display: flex;
+justify-content: center;
+align-items: center;
+color: #0f0;
+font-weight: bold;
+cursor: pointer;
+user-select: none;
+}
+.action-button:active { background-color: #555; }
+#game-canvas {
+width: 100%;
+height: 100%;
+background-color: #000;
+}
+.score-display {
+position: absolute;
+top: 10px;
+right: 10px;
+color: #0f0;
+font-size: 12px;
+z-index: 10;
+}
+#game-over {
+position: absolute;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+background-color: rgba(0, 0, 0, 0.8);
+display: flex;
+flex-direction: column;
+justify-content: center;
+align-items: center;
+color: #0f0;
+display: none;
+}
+.start-screen {
+position: absolute;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+display: flex;
+flex-direction: column;
+justify-content: center;
+align-items: center;
+color: #0f0;
+cursor: pointer;
+z-index: 20;
+}
+.matrix-effect {
+position: absolute;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+pointer-events: none;
+opacity: 0.1;
+z-index: 5;
+}
+</style>
+</head>
+<body>
+<div class="gameboy-container">
+<!-- Nome alterado para SKATE ADRENA -->
+<h1 class="game-title">SKATE ADRENA</h1>
+<div class="screen-container">
+<canvas id="game-canvas"></canvas>
+<div class="score-display">SCORE: <span id="score">0</span></div>
+<canvas id="matrix-canvas" class="matrix-effect"></canvas>
+<!-- Mensagens de início exibidas apenas aqui -->
+<div class="start-screen" id="start-screen">
+<h2>SKATE ADRENA</h2>
+<p>Pressione ESPAÇO para iniciar</p>
+<p>Pressione A para pular baixo</p>
+<p>Pressione B para pular alto</p>
+</div>
+<div id="game-over">
+<h2>GAME OVER</h2>
+<p>Pontuação: <span id="final-score">0</span></p>
+<p>Pressione ESPAÇO para reiniciar</p>
+</div>
+</div>
+<div class="controls">
+<!-- Removido o bloco de setas (dpad) -->
+<div class="action-buttons">
+<!-- Botão B para pulo alto -->
+<div class="action-button">B</div>
+<!-- Botão A para pulo baixo -->
+<div class="action-button">A</div>
+</div>
+</div>
+</div>
+
+<script>
+// Função utilitária para desenhar retângulos com cantos arredondados
+function drawRoundedRect(ctx, x, y, width, height, radius) {
+ctx.beginPath();
+ctx.moveTo(x + radius, y);
+ctx.lineTo(x + width - radius, y);
+ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+ctx.lineTo(x + width, y + height - radius);
+ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+ctx.lineTo(x + radius, y + height);
+ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+ctx.lineTo(x, y + radius);
+ctx.quadraticCurveTo(x, y, x + radius, y);
+ctx.closePath();
+ctx.fill();
+}
+
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
+const matrixCanvas = document.getElementById('matrix-canvas');
+const matrixCtx = matrixCanvas.getContext('2d');
+const startScreen = document.getElementById('start-screen');
+const gameOverScreen = document.getElementById('game-over');
+const scoreDisplay = document.getElementById('score');
+const finalScoreDisplay = document.getElementById('final-score');
+
+let gameStarted = false;
+let gameOver = false;
+let score = 0;
+let speed = 5;
+// Pulo baixo (A) usa 8; pulo alto (B) usa 12.
+const jumpForceNormal = 7;
+const jumpForceHigh = 12;
+const gravity = 0.6;
+const matrixGreen = '#0f0';
+const darkGreen = '#060';
+
+function resizeCanvas() {
+canvas.width = canvas.parentElement.clientWidth;
+canvas.height = canvas.parentElement.clientHeight;
+matrixCanvas.width = canvas.width;
+matrixCanvas.height = canvas.height;
+initMatrixEffect();
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function initMatrixEffect() {
+const fontSize = 10;
+const columns = matrixCanvas.width / fontSize;
+const drops = [];
+for (let i = 0; i < columns; i++) {
+drops[i] = Math.floor(Math.random() * matrixCanvas.height / fontSize);
+}
+function drawMatrix() {
+matrixCtx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
+matrixCtx.fillStyle = '#0f0';
+matrixCtx.font = fontSize + 'px monospace';
+for (let i = 0; i < drops.length; i++) {
+const text = String.fromCharCode(Math.floor(Math.random() * 128));
+matrixCtx.fillText(text, i * fontSize, drops[i] * fontSize);
+if (drops[i] * fontSize > matrixCanvas.height && Math.random() > 0.975) {
+drops[i] = 0;
+}
+drops[i]++;
+}
+if (gameStarted && !gameOver) {
+requestAnimationFrame(drawMatrix);
+}
+}
+drawMatrix();
+}
+
+const skater = {
+x: 50,
+y: 0, // Ao tocar o solo, será ajustado para canvas.height - 40
+width: 20,
+height: 30,
+velY: 0,
+jumping: false,
+draw() {
+ctx.fillStyle = matrixGreen;
+// Skate: tábua fina
+let boardWidth = 30;
+let boardHeight = 4;
+let boardX = this.x - 5;
+let boardY = this.y - 6;
+drawRoundedRect(ctx, boardX, boardY, boardWidth, boardHeight, 2);
+// Rodas menores
+ctx.beginPath();
+ctx.arc(boardX + 6, boardY + boardHeight + 2, 2, 0, Math.PI * 2);
+ctx.fill();
+ctx.beginPath();
+ctx.arc(boardX + boardWidth - 6, boardY + boardHeight + 2, 2, 0, Math.PI * 2);
+ctx.fill();
+
+// Desenho do skatista (homem-palito)
+ctx.lineWidth = 2;
+ctx.strokeStyle = matrixGreen;
+const centerX = this.x + this.width / 2;
+const footY = boardY + boardHeight;
+// Pernas em "inverted V"
+ctx.beginPath();
+ctx.moveTo(centerX - 5, footY);
+ctx.lineTo(centerX, footY - 15);
+ctx.stroke();
+ctx.beginPath();
+ctx.moveTo(centerX + 5, footY);
+ctx.lineTo(centerX, footY - 15);
+ctx.stroke();
+// Tronco do joelho até acima
+ctx.beginPath();
+ctx.moveTo(centerX, footY - 15);
+ctx.lineTo(centerX, footY - 35);
+ctx.stroke();
+// Braços
+ctx.beginPath();
+ctx.moveTo(centerX, footY - 25);
+ctx.lineTo(centerX - 8, footY - 30);
+ctx.stroke();
+ctx.beginPath();
+ctx.moveTo(centerX, footY - 25);
+ctx.lineTo(centerX + 8, footY - 30);
+ctx.stroke();
+// Cabeça
+ctx.beginPath();
+ctx.arc(centerX, footY - 40, 5, 0, Math.PI * 2);
+ctx.fill();
+
+},
+update() {
+this.velY += gravity;
+this.y += this.velY;
+// Colisão com o solo (40px do fundo do canvas)
+if (this.y >= canvas.height - 40) {
+this.y = canvas.height - 40;
+this.velY = 0;
+this.jumping = false;
+}
+},
+jump(force) {
+if (!this.jumping) {
+this.velY = -force;
+this.jumping = true;
+}
+},
+reset() {
+this.y = 0;
+this.velY = 0;
+this.jumping = false;
+}
+};
+
+const obstacles = [];
+const obstacleTypes = [
+{ width: 25, height: 25, name: 'cone' },
+{ width: 40, height: 12, name: 'rail' },
+{ width: 20, height: 15, name: 'rock' },
+{ width: 20, height: 40, name: 'wall' }
+];
+
+function createObstacle() {
+const type = obstacleTypes[Math.floor(Math.random() * obstacleTypes.length)];
+obstacles.push({
+x: canvas.width,
+y: canvas.height - 40,
+width: type.width,
+height: type.height,
+type: type.name
+});
+}
+
+function drawObstacles() {
+ctx.fillStyle = matrixGreen;
+obstacles.forEach(obstacle => {
+if (obstacle.type === 'cone') {
+ctx.beginPath();
+ctx.moveTo(obstacle.x, obstacle.y);
+ctx.lineTo(obstacle.x + obstacle.width, obstacle.y);
+ctx.lineTo(obstacle.x + obstacle.width / 2, obstacle.y - obstacle.height);
+ctx.closePath();
+ctx.fill();
+} else if (obstacle.type === 'rail') {
+ctx.fillRect(obstacle.x, obstacle.y - obstacle.height, obstacle.width, obstacle.height);
+} else if (obstacle.type === 'rock') {
+ctx.beginPath();
+ctx.arc(obstacle.x + obstacle.width / 2, obstacle.y - obstacle.height / 2, obstacle.width / 2, 0, Math.PI * 2);
+ctx.fill();
+} else if (obstacle.type === 'wall') {
+ctx.fillRect(obstacle.x, obstacle.y - obstacle.height, obstacle.width, obstacle.height);
+}
+});
+}
+
+function updateObstacles() {
+for (let i = obstacles.length - 1; i >= 0; i--) {
+obstacles[i].x -= speed;
+if (obstacles[i].x + obstacles[i].width < 0) {
+obstacles.splice(i, 1);
+score++;
+updateScore();
+if (score % 5 === 0) speed += 0.5;
+}
+}
+}
+
+function checkCollision() {
+for (let i = 0; i < obstacles.length; i++) {
+const obs = obstacles[i];
+const skLeft = skater.x + 2;
+const skRight = skater.x + skater.width - 2;
+const skTop = skater.y - skater.height;
+const skBottom = skater.y;
+const obsLeft = obs.x;
+const obsRight = obs.x + obs.width;
+const obsTop = obs.y - obs.height;
+const obsBottom = obs.y;
+if (skRight > obsLeft &&
+skLeft < obsRight &&
+skBottom > obsTop &&
+skTop < obsBottom) {
+return true;
+}
+}
+return false;
+}
+
+function drawGround() {
+ctx.fillStyle = darkGreen;
+// Corrigido: somente 40px de altura para o chão
+ctx.fillRect(0, canvas.height - 40, canvas.width, 40);
+ctx.fillStyle = matrixGreen;
+for (let i = 0; i < canvas.width; i += 20) {
+ctx.fillRect(i, canvas.height - 40, 10, 2);
+}
+}
+
+function updateScore() {
+scoreDisplay.textContent = score;
+finalScoreDisplay.textContent = score;
+}
+
+let lastObstacleTime = 0;
+const obstacleInterval = 1500;
+function gameLoop(timestamp) {
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+if (timestamp - lastObstacleTime > obstacleInterval) {
+createObstacle();
+lastObstacleTime = timestamp;
+}
+drawGround();
+skater.update();
+skater.draw();
+updateObstacles();
+drawObstacles();
+if (checkCollision()) {
+endGame();
+return;
+}
+if (gameStarted && !gameOver) {
+requestAnimationFrame(gameLoop);
+}
+}
+
+function startGame() {
+if (gameOver) resetGame();
+if (!gameStarted) {
+gameStarted = true;
+skater.y = canvas.height - 40;
+startScreen.style.display = 'none';
+lastObstacleTime = performance.now();
+requestAnimationFrame(gameLoop);
+initMatrixEffect();
+}
+}
+
+function endGame() {
+gameOver = true;
+gameOverScreen.style.display = 'flex';
+}
+
+function resetGame() {
+gameOver = false;
+gameOverScreen.style.display = 'none';
+score = 0;
+speed = 5;
+obstacles.length = 0;
+skater.reset();
+skater.y = canvas.height - 40;
+updateScore();
+lastObstacleTime = performance.now();
+requestAnimationFrame(gameLoop);
+}
+
+document.addEventListener('keydown', (e) => {
+if (e.code === 'Space') {
+e.preventDefault();
+if (!gameStarted) startGame();
+else if (gameOver) resetGame();
+else skater.jump(jumpForceNormal);
+}
+if (e.code === 'KeyA') {
+e.preventDefault();
+if (gameStarted && !gameOver) skater.jump(jumpForceNormal);
+}
+if (e.code === 'KeyB') {
+e.preventDefault();
+if (gameStarted && !gameOver) skater.jump(jumpForceHigh);
+}
+});
+
+canvas.addEventListener('touchstart', (e) => {
+e.preventDefault();
+if (!gameStarted) startGame();
+else if (gameOver) resetGame();
+else skater.jump(jumpForceNormal);
+});
+
+document.querySelector('.action-button:nth-child(1)').addEventListener('click', function() {
+if (gameStarted && !gameOver) skater.jump(jumpForceHigh);
+else gameStarted ? resetGame() : startGame();
+});
+document.querySelector('.action-button:nth-child(2)').addEventListener('click', function() {
+if (gameStarted && !gameOver) skater.jump(jumpForceNormal);
+else gameStarted ? resetGame() : startGame();
+});
+
+startScreen.addEventListener('click', startGame);
+
+</script>
+</body>
+</html>
